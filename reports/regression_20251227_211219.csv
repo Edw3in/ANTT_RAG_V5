@@ -1,0 +1,1 @@
+test_id,strategy,k,question,http_status,confiabilidade,tempo_processamento,retrieval_time,llm_time,llm_model,documents_retrieved,evidence_target_present,top_evidence_source,top_evidence_page,top_evidence_score
