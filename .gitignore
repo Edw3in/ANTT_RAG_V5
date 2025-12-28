@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+
+# Local data/state (NÃO versionar)
+data/
+vectorstore/
+reports/
+backups/
+backup_*/
+
+# Logs
+*.log
+00_GOVERNANCA/logs_auditoria/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
