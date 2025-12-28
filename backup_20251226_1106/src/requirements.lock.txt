@@ -1,3 +1,0 @@
-chromadb==0.4.22
-posthog<4
-urllib3<2.4.0
