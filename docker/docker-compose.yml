@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # Aplicação principal
+  antt-rag-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: antt-rag-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - ANTT_RAG_CONFIG=/app/config/config.yaml
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LOG_LEVEL=INFO
+    volumes:
+      # Dados persistentes
+      - ../data:/app/data
+      - ../vectorstore:/app/vectorstore
+      - ../00_GOVERNANCA:/app/00_GOVERNANCA
+      - ../prompts:/app/prompts
+      - ../logs:/app/logs
+      # Configuração (read-only)
+      - ../config:/app/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - antt-rag-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # Redis (opcional - para cache distribuído)
+  redis:
+    image: redis:7-alpine
+    container_name: antt-rag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - antt-rag-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Nginx (opcional - reverse proxy)
+  nginx:
+    image: nginx:alpine
+    container_name: antt-rag-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - antt-rag-api
+    restart: unless-stopped
+    networks:
+      - antt-rag-network
+    profiles:
+      - with-nginx
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  antt-rag-network:
+    driver: bridge

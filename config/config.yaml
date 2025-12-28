@@ -1,0 +1,122 @@
+# ============================================================================
+# ANTT RAG v4 — Configuração Principal
+# Opção 3: LLM Local (Ollama) + Fallback na Nuvem
+# ============================================================================
+
+environment: development        # development | staging | production
+debug: true
+
+paths:
+  base_dir: .
+  data_dir: ./data
+
+  bcp_inbox: ./data/bcp/inbox
+  bcp_processado: ./data/bcp/processado
+  bcp_rejeitado: ./data/bcp/rejeitado
+
+  metadata_db: ./data/metadata/documents.db
+  vectorstore_dir: ./vectorstore
+  auditoria_dir: ./00_GOVERNANCA/logs_auditoria
+  prompts_dir: ./prompts
+
+models:
+  # =========================
+  # Embeddings
+  # =========================
+  embedding: sentence-transformers/all-MiniLM-L6-v2
+  embedding_device: cuda
+
+  # =========================
+  # Reranker
+  # =========================
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  reranker_device: cuda
+
+  # =========================
+  # LLM PRINCIPAL (LOCAL)
+  # =========================
+  llm_provider: ollama
+  llm_model: qwen2.5:7b
+  llm_temperature: 0.1
+  llm_max_tokens: 2048
+  llm_timeout: 60
+
+  # Endereço do Ollama
+  ollama_base_url: http://127.0.0.1:11434
+
+  # =========================
+  # FALLBACK (NUVEM)
+  # =========================
+  fallback_enabled: true
+  fallback_provider: google      # google | openai
+  fallback_model: gemini-1.5-flash
+  fallback_timeout: 60
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+  separators:
+    - "\n\n"
+    - "\n"
+    - ". "
+    - " "
+    - ""
+
+retrieval:
+  default_k: 5
+  max_k: 20
+  similarity_threshold: 0.5
+
+  use_hybrid: true
+  use_reranker: true
+
+  bm25_weight: 0.5
+  vector_weight: 0.5
+
+governanca:
+  matriz_precedencia: ./00_GOVERNANCA/matriz_precedencia.yaml
+  taxonomia_temas: ./00_GOVERNANCA/taxonomia_temas.yaml
+  politica_nao_resposta: ./00_GOVERNANCA/politica_nao_resposta.yaml
+
+  enable_audit: true
+  audit_level: full              # full | minimal | none
+
+api:
+  host: 0.0.0.0
+  port: 8001
+  workers: 1
+  reload: true
+
+  cors_origins: ["*"]
+  cors_methods: ["*"]
+  cors_headers: ["*"]
+
+  rate_limit_enabled: true
+  rate_limit_requests: 100
+  rate_limit_window: 60
+
+  enable_metrics: true
+  enable_docs: true
+
+cache:
+  enabled: true
+  ttl: 3600
+  max_size: 1000
+  backend: memory                # memory | redis
+
+logging:
+  level: INFO
+  format: json                   # json | text
+  output: stdout                 # stdout | file | both
+  file_path: ./logs/antt_rag.log
+  rotation: 1 day
+  retention: 30 days
+
+security:
+  enable_auth: false
+  api_key_header: X-API-Key
+  allowed_api_keys: []
+
+  enable_https: false
+  ssl_cert_path:
+  ssl_key_path:
