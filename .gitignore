@@ -35,3 +35,4 @@ backup_*/
 *.db
 *.sqlite
 *.sqlite3
+*.zip
