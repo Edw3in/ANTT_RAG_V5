@@ -113,22 +113,61 @@ class AnswerService:
         documents = retrieval_result.documents
         scores = retrieval_result.scores
 
+        # 3.1 HARD GATE - SEM RELAÇÃO => INSUFICIENTE (SEM EVIDÊNCIAS)
+        gate_reason = self._fails_relevance_gate(scores, min_avg=0.5, min_max=1.0)
+        if gate_reason:
+            return AnswerResult(
+                question=question,
+                answer="❌ NÃO LOCALIZADO: Não foi encontrada informação relacionada ao tema nos documentos consultados.",
+                confidence=ConfidenceLevel.INSUFICIENTE,
+                evidences=[],
+                warnings=[gate_reason],
+                metadata={
+                    "retrieval_strategy": str(retrieval_strategy),
+                    "documents_retrieved": len(documents) if documents else 0,
+                    "gate": "relevance_hardgate",
+                    "avg_score": self._compute_relevance_stats(scores)["avg"],
+                    "max_score": self._compute_relevance_stats(scores)["max"],
+                },
+                processing_time=time.time() - start_time
+            )
+
         # 4. Verificação de documentos
         if not documents:
             return self._create_no_documents_response(question)
 
+        # ---------------------------------------------------------------------
+        # HARD GATE: se a relevância média for muito baixa, tratar como "não localizado"
+        # ---------------------------------------------------------------------
+        avg_score = (sum(scores) / len(scores)) if scores else 0.0
+
+        # Ajuste este X conforme a escala do seu retriever (comece com 0.15 e calibre)
+        MIN_AVG_SCORE = 0.15
+
+        if avg_score < MIN_AVG_SCORE:
+            # Importantíssimo: não devolver evidências "aleatórias" quando o score é ínfimo
+            result = self._create_no_documents_response(question)
+            # opcional: registrar motivo
+            if result.warnings is None:
+                result.warnings = []
+            result.warnings.append(
+                f"HardGate: avg_score={avg_score:.6f} < {MIN_AVG_SCORE:.2f} (sem relação suficiente com a pergunta)."
+            )
+            return result
+
+        # 5. Verificação adicional de documentos
         if len(documents) < 2:
             warnings.append("Poucos documentos encontrados. Resposta pode ser incompleta.")
 
-        # 5. Preparação de evidências
+        # 6. Preparação de evidências
         evidences = self._prepare_evidences(documents, scores)
 
-        # 6. Hard Grounding - Filtra evidências válidas
+        # 7. Hard Grounding - Filtra evidências válidas
         evidences = self._filter_evidences_for_produto_d_prazo(question, evidences)
         if not evidences:
             return self._create_no_documents_response(question)
 
-        # 7. Resposta Determinística (opcional)
+        # 8. Resposta Determinística (opcional)
         direct_answer = self._maybe_answer_produto_d_prazo_direct(question, evidences)
 
         if direct_answer:
@@ -136,7 +175,7 @@ class AnswerService:
             llm_model, llm_tokens, llm_time = "rule_based", 0, 0.0
             confidence = ConfidenceLevel.ALTA
         else:
-            # 8. Geração com LLM
+            # 9. Geração com LLM
             context = self._build_context(evidences)
             system_prompt = self.prompt_manager.get_system_prompt()
             user_prompt = self.prompt_manager.format_answer_prompt(
@@ -156,7 +195,7 @@ class AnswerService:
                 logger.error(f"❌ Erro ao gerar resposta LLM: {e}")
                 return self._create_error_response(question, str(e))
 
-            # 9. Validação
+            # 10. Validação
             validation_result = self.validator.validate_response(
                 question=question,
                 answer=answer_text,
@@ -169,7 +208,7 @@ class AnswerService:
             if validation_result.get("warnings"):
                 warnings.extend(validation_result["warnings"])
 
-            # 10. Guardrail Final
+            # 11. Guardrail Final
             if re.search(r"\b(dia\s*10|10[ºo]?\s*dia\s*útil)\b", answer_text, re.IGNORECASE):
                 has_evidence = any(
                     re.search(r"\b(dia\s*10|10[ºo]?\s*dia\s*útil)\b", e.excerpt or "", re.IGNORECASE)
@@ -183,10 +222,10 @@ class AnswerService:
                     confidence = ConfidenceLevel.INSUFICIENTE
                     warnings.append("Guardrail: prazo citado sem evidência textual compatível.")
 
-        # 11. Extração de raciocínio
+        # 12. Extração de raciocínio
         reasoning = self._extract_reasoning(answer_text) if include_reasoning else None
 
-        # 12. Consolidação
+        # 13. Consolidação
         result = AnswerResult(
             question=question,
             answer=answer_text,
@@ -210,6 +249,41 @@ class AnswerService:
             self._audit_interaction(result)
 
         return result
+
+    # =========================================================================
+    # HARD GATE (RELEVÂNCIA) - NOVO
+    # =========================================================================
+
+    def _compute_relevance_stats(self, scores: List[float]) -> Dict[str, float]:
+        """Calcula estatísticas simples do score do reranker (cross-encoder)."""
+        if not scores:
+            return {"avg": 0.0, "max": 0.0, "min": 0.0}
+
+        s = [float(x) for x in scores]
+        return {
+            "avg": sum(s) / len(s),
+            "max": max(s),
+            "min": min(s),
+        }
+
+    def _fails_relevance_gate(
+        self,
+        scores: List[float],
+        min_avg: float = 0.5,
+        min_max: float = 1.0
+    ) -> Optional[str]:
+        """
+        Retorna string com motivo se falhar no gate; caso contrário retorna None.
+        Gate robusto para scores do cross-encoder (podem ser negativos).
+        """
+        st = self._compute_relevance_stats(scores)
+
+        # Regra: precisa ter pelo menos um candidato "realmente relevante" (max)
+        # e uma média mínima para o top-k não ser ruído.
+        if st["max"] < min_max or st["avg"] < min_avg:
+            return f"HardGate: avg_score={st['avg']:.6f} < {min_avg} ou max_score={st['max']:.6f} < {min_max} (sem relação suficiente com a pergunta)."
+
+        return None
 
     async def agenerate_answer(
         self,
@@ -237,6 +311,23 @@ class AnswerService:
 
         if not retrieval_result.documents:
             return self._create_no_documents_response(question)
+        gate_reason = self._fails_relevance_gate(retrieval_result.scores, min_avg=0.5, min_max=1.0)
+        if gate_reason:
+            return AnswerResult(
+                question=question,
+                answer="❌ NÃO LOCALIZADO: Não foi encontrada informação relacionada ao tema nos documentos consultados.",
+                confidence=ConfidenceLevel.INSUFICIENTE,
+                evidences=[],
+                warnings=[gate_reason],
+                metadata={
+                    "retrieval_strategy": str(retrieval_strategy),
+                    "documents_retrieved": len(retrieval_result.documents) if retrieval_result.documents else 0,
+                    "gate": "relevance_hardgate",
+                    "avg_score": self._compute_relevance_stats(retrieval_result.scores)["avg"],
+                    "max_score": self._compute_relevance_stats(retrieval_result.scores)["max"],
+                },
+                processing_time=time.time() - start_time
+            )
 
         evidences = self._prepare_evidences(retrieval_result.documents, retrieval_result.scores)
         evidences = self._filter_evidences_for_produto_d_prazo(question, evidences)
